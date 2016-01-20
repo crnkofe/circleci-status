@@ -2,14 +2,15 @@
 """CircleCI Status.
 
 Usage:
-  status.py [-b=<BRANCH>] [-p=<PROJECTS>]
+  status.py [-b=<BRANCH>] [-p=<PROJECTS>] [-l=<LAST> ]
   status.py (-h | --help)
   status.py --version
 
 Options:
-  -h --help               Show this screen.
-  -b --branch=<BRANCH>    Branch to use(master by default)
+  -h --help                Show this screen.
+  -b --branch=<BRANCH>     Branch to use(master by default)
   -p --projects=<PROJECTS> Comma separated list of repository names
+  -l --last=<BUILDS>       How many builds to show.
 """
 
 import os
@@ -44,10 +45,11 @@ if not __name__ == '__main__':
     sys.exit(1)
 
 arguments = docopt(__doc__, version='CircleCI Status')
-branch = arguments.get('--branch', 'master')
+branch = arguments.get('--branch', 'master') or 'master'
 projects = arguments.get('--projects')
 if projects is not None:
     projects = set(projects.split(','))
+count_builds = int(arguments.get('--last') or 1)
 
 def git_request(api, token=None):
     success = False
@@ -96,12 +98,11 @@ try:
             if project['reponame'] not in projects:
                 continue
 
-
         valid_branch = project['branches'][branch] if branch in project['branches'] else None
 
         if valid_branch is not None:
             builds = [('running', build) for build in valid_branch['running_builds']] +\
-                [('recent', build) for build in valid_branch['recent_builds'][:1]]
+                [('recent', build) for build in valid_branch['recent_builds'][:count_builds]]
         else:
             builds = []
 
@@ -123,13 +124,15 @@ try:
                 ) if git_response is not None else "N/A",
                 'type': build_type
             })
+            if i >= count_builds:
+                break
 
         if len(data) == 0:
             data = " N/A"
         else:
             data = "\n" + '\n'.join([
                 "\t{github}\n\t{circle} - {build_type}".format(
-                    github=entry['github'].replace("\n", "\n\t"),
+                    github=entry['github'].replace("\n", "\n\t").strip(),
                     circle=entry['circle'].replace("\n", "\n\t"),
                     build_type=entry['type']
                 ) for entry in data
