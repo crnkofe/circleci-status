@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 import json
 import logging
 import requests
@@ -13,6 +14,8 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+MAX_RETRIES = 3
 
 GIT_TOKEN =  os.environ['GIT_TOKEN']
 GIT_API = 'https://api.github.com'
@@ -28,15 +31,28 @@ if not __name__ == '__main__':
 
 
 def git_request(api, token=None):
-    r = requests.get(
-        api,
-        headers={
-            'content-type':'application/json',
-            'Authorization': 'token {}'.format(token or GIT_TOKEN),
-            'Accept': 'application/vnd.github.v3+json'
-        }
-    )
-    return r.json()
+    success = False
+    retries = 0
+    r = None
+    while not success and retries < MAX_RETRIES:
+        try:
+            r = requests.get(
+                api,
+                headers={
+                    'content-type':'application/json',
+                    'Authorization': 'token {}'.format(token or GIT_TOKEN),
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            )
+            success = True
+        except:
+            logging.warning('Failed querying Git API')
+        time.sleep(1)
+        retries += 1
+    try:
+        return r.json() if r is not None else None
+    except:
+        return None
 
 
 try:
@@ -56,33 +72,35 @@ try:
 
     for project in blob:
         data = []
-        for i, recent_build in enumerate(project['branches']['master']['recent_builds']):
 
+        builds = [('running', build) for build in project['branches']['master']['running_builds']] +\
+            [('recent', build) for build in project['branches']['master']['recent_builds'][:1]]
+
+        for i, (build_type, recent_build) in enumerate(builds):
             git_commit_url = GIT_API_COMMIT.format(
                 repo=project['reponame'],
                 hashtag=recent_build['vcs_revision']
             )
 
             git_response = git_request(git_commit_url)
-            #print(recent_build)
             data.append({
                 'circle': str(recent_build['build_num']) + " " + str(recent_build['outcome'][:4]),
                 'github': '{email} - {message}'.format(
                     email=git_response['author']['email'],
                     message=git_response['message']
-                )
+                ) if git_response is not None else "N/A",
+                'type': build_type
             })
-            if i >= 0:
-                break
 
-        print("{col}{name: <15}{nc}:\n{data}".format(
+        print("{col}{name}{nc}:\n{data}".format(
             col=RED,
             name=project['reponame'],
             nc=NC,
             data='\n'.join([
-                "\t{github}\n\t{circle}".format(
+                "\t{github}\n\t{circle} - {build_type}".format(
                     github=entry['github'].replace("\n", "\n\t"),
-                    circle=entry['circle'].replace("\n", "\n\t")
+                    circle=entry['circle'].replace("\n", "\n\t"),
+                    build_type=entry['type']
                 ) for entry in data
             ])
         ))
