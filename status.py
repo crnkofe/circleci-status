@@ -1,4 +1,16 @@
 #!/usr/bin/env python
+"""CircleCI Status.
+
+Usage:
+  status.py [-b=<BRANCH>] [-p=<PROJECTS>]
+  status.py (-h | --help)
+  status.py --version
+
+Options:
+  -h --help               Show this screen.
+  -b --branch=<BRANCH>    Branch to use(master by default)
+  -p --projects=<PROJECTS> Comma separated list of repository names
+"""
 
 import os
 import sys
@@ -6,6 +18,8 @@ import time
 import json
 import logging
 import requests
+from docopt import docopt
+
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -29,6 +43,11 @@ if not __name__ == '__main__':
     logging.error('Script must be run and not imported')
     sys.exit(1)
 
+arguments = docopt(__doc__, version='CircleCI Status')
+branch = arguments.get('--branch', 'master')
+projects = arguments.get('--projects')
+if projects is not None:
+    projects = set(projects.split(','))
 
 def git_request(api, token=None):
     success = False
@@ -73,8 +92,18 @@ try:
     for project in blob:
         data = []
 
-        builds = [('running', build) for build in project['branches']['master']['running_builds']] +\
-            [('recent', build) for build in project['branches']['master']['recent_builds'][:1]]
+        if projects is not None:
+            if project['reponame'] not in projects:
+                continue
+
+
+        valid_branch = project['branches'][branch] if branch in project['branches'] else None
+
+        if valid_branch is not None:
+            builds = [('running', build) for build in valid_branch['running_builds']] +\
+                [('recent', build) for build in valid_branch['recent_builds'][:1]]
+        else:
+            builds = []
 
         for i, (build_type, recent_build) in enumerate(builds):
             git_commit_url = GIT_API_COMMIT.format(
@@ -83,8 +112,11 @@ try:
             )
 
             git_response = git_request(git_commit_url)
+            outcome = (recent_build['outcome'] or '')[:4] if 'outcome' in recent_build else ''
+            if outcome != "":
+                outcome = " " + outcome
             data.append({
-                'circle': str(recent_build['build_num']) + " " + str(recent_build['outcome'][:4]),
+                'circle': str(recent_build['build_num']) + outcome,
                 'github': '{email} - {message}'.format(
                     email=git_response['author']['email'],
                     message=git_response['message']
@@ -92,17 +124,22 @@ try:
                 'type': build_type
             })
 
-        print("{col}{name}{nc}:\n{data}".format(
-            col=RED,
-            name=project['reponame'],
-            nc=NC,
-            data='\n'.join([
+        if len(data) == 0:
+            data = " N/A"
+        else:
+            data = "\n" + '\n'.join([
                 "\t{github}\n\t{circle} - {build_type}".format(
                     github=entry['github'].replace("\n", "\n\t"),
                     circle=entry['circle'].replace("\n", "\n\t"),
                     build_type=entry['type']
                 ) for entry in data
             ])
+
+        print("{col}{name}{nc}:{data}".format(
+            col=RED,
+            name=project['reponame'],
+            nc=NC,
+            data=data
         ))
 
 except:
